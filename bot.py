@@ -404,7 +404,7 @@ async def fn_admin(ctx, subcommand: str = None, *args):
         )
 
 
-@bot.command(name="help")
+@bot.command(name="fnhelp")
 async def help_cmd(ctx):
     """Show all Fight Night commands."""
     embed = discord.Embed(title="⚔️ Fight Night Bot Commands", color=0x3498DB)
