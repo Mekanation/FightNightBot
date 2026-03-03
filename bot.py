@@ -421,7 +421,7 @@ async def help_cmd(ctx):
 async def customs(ctx):
     customGames = discord.utils.get(ctx.guild.roles, id=1478504818027794543)
     channel = await get_fn_channel(ctx)
-    await ctx.send(f'{customGames.mention} {ctx.author.mention} are looking for customs')
+    await ctx.send(f'{customGames.mention} {ctx.author.mention} is looking for a custom game')
 
 
 
