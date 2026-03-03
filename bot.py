@@ -417,6 +417,13 @@ async def help_cmd(ctx):
     embed.add_field(name="`!fn removetable <1|2>` *(admin)*", value="Remove a stalled table", inline=False)
     await ctx.send(embed=embed)
 
+@bot.command(name="customs")
+async def customs(ctx):
+    customGames = discord.utils.get(ctx.guild.roles, id=1478504818027794543)
+    channel = await get_fn_channel(ctx)
+    await ctx.send(f'{customGames.mention} {ctx.author.mention} are looking for customs')
+
+
 
 # ──────────────────────────────────────────────
 # Events
