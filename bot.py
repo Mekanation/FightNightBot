@@ -25,7 +25,7 @@ DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN", "YOUR_TOKEN_HERE")
 
 # The channel where the bot posts Fight Night updates.
 # Set to None to let it respond wherever commands are used.
-FIGHT_NIGHT_CHANNEL_ID = None  # e.g. 1234567890
+FIGHT_NIGHT_CHANNEL_ID = 1441991005535600740  # e.g. 1234567890
 
 # How many people in queue triggers a second table
 SECOND_TABLE_THRESHOLD = 12
@@ -34,7 +34,7 @@ SECOND_TABLE_THRESHOLD = 12
 WIN_STREAK_TARGET = 3
 
 # Role or user IDs allowed to use admin commands (besides server admins)
-ADMIN_ROLE_NAME = "Moderator"  # set to None to disable role check
+ADMIN_ROLE_NAME = "Lord Mod"  # set to None to disable role check
 
 # ──────────────────────────────────────────────
 # Persistence
