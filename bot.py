@@ -21,11 +21,11 @@ from collections import deque
 # Config — edit these before running
 # ──────────────────────────────────────────────
 BOT_PREFIX = "!"
-DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN", "YOUR_TOKEN_HERE")
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
 # The channel where the bot posts Fight Night updates.
 # Set to None to let it respond wherever commands are used.
-FIGHT_NIGHT_CHANNEL_ID = 1441991005535600740  # e.g. 1234567890
+FIGHT_NIGHT_CHANNEL_ID = None  # e.g. 1234567890
 
 # How many people in queue triggers a second table
 SECOND_TABLE_THRESHOLD = 12
