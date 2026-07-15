@@ -64,18 +64,18 @@ class Table:
         self.number = number          # 1 or 2
         self.champion_id = champion_id
         self.challenger_id = challenger_id
-        self.streak = 0               # champion's current consecutive wins (0 before first win)
 
     def players(self):
         return {self.champion_id, self.challenger_id}
 
     def __repr__(self):
-        return f"Table(number={self.number}, champion={self.champion_id}, challenger={self.challenger_id}, streak={self.streak})"
+        return f"Table(number={self.number}, champion={self.champion_id}, challenger={self.challenger_id})"
 
 
 # Global state — all in memory, HOF is persisted to disk
 queue: deque[int] = deque()   # user IDs in order
 tables: dict[int, Table] = {} # table_number -> Table (max 2 tables)
+win_streaks: dict[int, int] = {}  # user ID -> current consecutive wins (per player, not per table)
 
 # ──────────────────────────────────────────────
 # Bot setup
@@ -131,7 +131,8 @@ def queue_embed(guild: discord.Guild) -> discord.Embed:
             chal = guild.get_member(table.challenger_id)
             champ_str = champ.display_name if champ else str(table.champion_id)
             chal_str = chal.display_name if chal else str(table.challenger_id)
-            streak_bar = "🔥" * table.streak if table.streak > 0 else "—"
+            champ_streak = win_streaks.get(table.champion_id, 0)
+            streak_bar = "🔥" * champ_streak if champ_streak > 0 else "—"
             embed.add_field(
                 name=f"Table {num}",
                 value=f"**Champion:** {champ_str} {streak_bar}\n**Challenger:** {chal_str}",
@@ -175,14 +176,19 @@ async def try_start_second_table(channel: discord.TextChannel, guild: discord.Gu
 async def advance_table(table: Table, winner_id: int, loser_id: int,
                         channel: discord.TextChannel, guild: discord.Guild):
     """
-    Called after a win is reported. Updates streak, checks for 3-in-a-row,
-    pulls next challenger from queue or closes the table.
+    Called after a win is reported. Updates the winner's personal streak,
+    checks for 3-in-a-row, sends the loser to the back of the queue, and
+    pulls the next challenger from queue or closes the table.
     """
     hof = load_hof()
-    table.streak += 1
+
+    # Win/loss streaks are tracked per player, not per table seat
+    win_streaks.pop(loser_id, None)
+    streak = win_streaks.get(winner_id, 0) + 1
+    win_streaks[winner_id] = streak
 
     # ── 3-in-a-row ──────────────────────────────
-    if table.streak >= WIN_STREAK_TARGET:
+    if streak >= WIN_STREAK_TARGET:
         winner = guild.get_member(winner_id)
         winner_name = winner.display_name if winner else str(winner_id)
 
@@ -190,6 +196,9 @@ async def advance_table(table: Table, winner_id: int, loser_id: int,
         hof_key = str(winner_id)
         hof[hof_key] = {"name": winner_name, "count": hof.get(hof_key, {}).get("count", 0) + 1}
         save_hof(hof)
+
+        # Winner leaves the rotation entirely — streak is cleared
+        win_streaks.pop(winner_id, None)
 
         await channel.send(
             f"🏆 **{get_mention(winner_id)} WON 3 IN A ROW ON TABLE {table.number}!** 🏆\n"
@@ -216,6 +225,9 @@ async def advance_table(table: Table, winner_id: int, loser_id: int,
             await channel.send(
                 f"⏳ Table {table.number} is waiting for players. Join with `!join`!"
             )
+
+        # Loser rejoins the back of the queue for another shot
+        queue.append(loser_id)
         return
 
     # ── Normal win — champion stays, pull next challenger ──
@@ -223,7 +235,8 @@ async def advance_table(table: Table, winner_id: int, loser_id: int,
         next_challenger = queue.popleft()
         table.champion_id = winner_id
         table.challenger_id = next_challenger
-        streak_str = f"({table.streak} in a row 🔥)" if table.streak > 1 else ""
+        queue.append(loser_id)
+        streak_str = f"({streak} in a row 🔥)" if streak > 1 else ""
         await channel.send(
             f"✅ **Game over on Table {table.number}!** {get_mention(winner_id)} wins {streak_str}\n"
             f"⚔️ Next up: {get_mention(winner_id)} vs {get_mention(next_challenger)} — let's go!"
@@ -231,6 +244,7 @@ async def advance_table(table: Table, winner_id: int, loser_id: int,
     else:
         # No one in queue — pause the table
         del tables[table.number]
+        queue.append(loser_id)
         await channel.send(
             f"✅ **Game over on Table {table.number}!** {get_mention(winner_id)} wins — "
             f"but the queue is empty. Someone `!join` to keep it going!"
@@ -294,6 +308,7 @@ async def leave_queue(ctx):
         return
 
     queue.remove(uid)
+    win_streaks.pop(uid, None)
     await channel.send(f"👋 {ctx.author.mention} has left the queue.")
 
 
@@ -383,6 +398,7 @@ async def fn_admin(ctx, subcommand: str = None, *args):
     if subcommand == "reset":
         queue.clear()
         tables.clear()
+        win_streaks.clear()
         await channel.send("🔄 Fight Night has been fully reset. Queue and tables cleared.")
 
     elif subcommand == "removetable":
