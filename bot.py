@@ -58,15 +58,18 @@ def save_hof(hof: dict):
 class Table:
     """
     Represents one active game between a champion and a challenger.
-    The champion holds a win streak; the challenger is the next person from the queue.
+    challenger_id is None when the table is paused, waiting for someone to !join and challenge the champion.
     """
-    def __init__(self, number: int, champion_id: int, challenger_id: int):
+    def __init__(self, number: int, champion_id: int, challenger_id: int | None = None):
         self.number = number          # 1 or 2
         self.champion_id = champion_id
         self.challenger_id = challenger_id
 
     def players(self):
-        return {self.champion_id, self.challenger_id}
+        ids = {self.champion_id}
+        if self.challenger_id is not None:
+            ids.add(self.challenger_id)
+        return ids
 
     def __repr__(self):
         return f"Table(number={self.number}, champion={self.champion_id}, challenger={self.challenger_id})"
@@ -105,6 +108,16 @@ def all_active_player_ids() -> set[int]:
         ids.update(t.players())
     return ids
 
+def seat_challenger(table: Table) -> bool:
+    """
+    Seat the next queued player as the table's challenger, if the seat is open.
+    Returns True if someone was seated.
+    """
+    if table.challenger_id is None and queue:
+        table.challenger_id = queue.popleft()
+        return True
+    return False
+
 async def get_fn_channel(ctx) -> discord.TextChannel:
     """Returns the designated fight night channel, or falls back to ctx.channel."""
     if FIGHT_NIGHT_CHANNEL_ID:
@@ -128,11 +141,14 @@ def queue_embed(guild: discord.Guild) -> discord.Embed:
     else:
         for num, table in sorted(tables.items()):
             champ = guild.get_member(table.champion_id)
-            chal = guild.get_member(table.challenger_id)
             champ_str = champ.display_name if champ else str(table.champion_id)
-            chal_str = chal.display_name if chal else str(table.challenger_id)
             champ_streak = win_streaks.get(table.champion_id, 0)
             streak_bar = "🔥" * champ_streak if champ_streak > 0 else "—"
+            if table.challenger_id is not None:
+                chal = guild.get_member(table.challenger_id)
+                chal_str = chal.display_name if chal else str(table.challenger_id)
+            else:
+                chal_str = "_Waiting for a challenger — `!join`_"
             embed.add_field(
                 name=f"Table {num}",
                 value=f"**Champion:** {champ_str} {streak_bar}\n**Challenger:** {chal_str}",
@@ -173,6 +189,27 @@ async def try_start_second_table(channel: discord.TextChannel, guild: discord.Gu
         f"{get_mention(p1)} vs {get_mention(p2)} — good luck! 🗡️"
     )
 
+async def try_seat_players(channel: discord.TextChannel, guild: discord.Guild):
+    """Fill any table that's paused waiting for a challenger, start table 1 if none exist yet,
+    and open table 2 if the queue is large enough."""
+    for num in sorted(tables.keys()):
+        table = tables[num]
+        if seat_challenger(table):
+            await channel.send(
+                f"⚔️ **Table {num} is back on!** "
+                f"{get_mention(table.champion_id)} vs {get_mention(table.challenger_id)} — let's go!"
+            )
+
+    if not tables and len(queue) >= 2:
+        p1 = queue.popleft()
+        p2 = queue.popleft()
+        tables[1] = Table(1, p1, p2)
+        await channel.send(
+            f"⚔️ **Fight Night is starting!** {get_mention(p1)} vs {get_mention(p2)} — Table 1 is live!"
+        )
+
+    await try_start_second_table(channel, guild)
+
 async def advance_table(table: Table, winner_id: int, loser_id: int,
                         channel: discord.TextChannel, guild: discord.Guild):
     """
@@ -205,7 +242,9 @@ async def advance_table(table: Table, winner_id: int, loser_id: int,
             f"That's {hof[hof_key]['count']} time(s) in the Hall of Fame. Absolutely dominant. 👑"
         )
 
-        # Remove table, start fresh with next two in queue
+        # Remove table, start fresh from whoever is already queued —
+        # seat from the existing queue BEFORE the loser rejoins it, so the
+        # loser can never instantly refill the seat they just lost.
         del tables[table.number]
         if len(queue) >= 2:
             p1 = queue.popleft()
@@ -216,10 +255,9 @@ async def advance_table(table: Table, winner_id: int, loser_id: int,
             )
         elif len(queue) == 1:
             p1 = queue.popleft()
-            # Need one more person — leave table closed but hold player
-            queue.appendleft(p1)
+            tables[table.number] = Table(table.number, p1)
             await channel.send(
-                f"⏳ Table {table.number} needs one more player to restart. Join with `!join`!"
+                f"⏳ {get_mention(p1)} is holding Table {table.number} — `!join` to challenge them!"
             )
         else:
             await channel.send(
@@ -231,23 +269,23 @@ async def advance_table(table: Table, winner_id: int, loser_id: int,
         return
 
     # ── Normal win — champion stays, pull next challenger ──
-    if queue:
-        next_challenger = queue.popleft()
-        table.champion_id = winner_id
-        table.challenger_id = next_challenger
-        queue.append(loser_id)
+    # Seat from the existing queue BEFORE the loser rejoins it, so the loser
+    # can't immediately refill the seat they just vacated.
+    table.champion_id = winner_id
+    table.challenger_id = None
+    seated = seat_challenger(table)
+    queue.append(loser_id)
+
+    if seated:
         streak_str = f"({streak} in a row 🔥)" if streak > 1 else ""
         await channel.send(
             f"✅ **Game over on Table {table.number}!** {get_mention(winner_id)} wins {streak_str}\n"
-            f"⚔️ Next up: {get_mention(winner_id)} vs {get_mention(next_challenger)} — let's go!"
+            f"⚔️ Next up: {get_mention(winner_id)} vs {get_mention(table.challenger_id)} — let's go!"
         )
     else:
-        # No one in queue — pause the table
-        del tables[table.number]
-        queue.append(loser_id)
         await channel.send(
             f"✅ **Game over on Table {table.number}!** {get_mention(winner_id)} wins — "
-            f"but the queue is empty. Someone `!join` to keep it going!"
+            f"queue is empty. {get_mention(winner_id)} holds the table — `!join` to challenge them!"
         )
 
 # ──────────────────────────────────────────────
@@ -273,22 +311,14 @@ async def join_queue(ctx):
         return
 
     queue.append(uid)
-    position = list(queue).index(uid) + 1
+    await try_seat_players(channel, ctx.guild)
 
-    # If no tables exist yet and we have 2 players, start table 1
-    if not tables and len(queue) >= 2:
-        p1 = queue.popleft()
-        p2 = queue.popleft()
-        tables[1] = Table(1, p1, p2)
-        await channel.send(
-            f"⚔️ **Fight Night is starting!** {get_mention(p1)} vs {get_mention(p2)} — Table 1 is live!"
-        )
-    else:
+    # Only announce a queue position if they weren't immediately seated
+    if uid in queue:
+        position = list(queue).index(uid) + 1
         await channel.send(
             f"✅ {ctx.author.mention} joined the queue at position **#{position}**."
         )
-        # Check if second table should open
-        await try_start_second_table(channel, ctx.guild)
 
 
 @bot.command(name="leave")
@@ -338,6 +368,12 @@ async def report_win(ctx, winner: discord.Member = None):
         await channel.send(f"{ctx.author.mention} you're not in an active game.")
         return
 
+    if caller_table.challenger_id is None:
+        await channel.send(
+            f"⏳ Table {caller_table.number} is still waiting for a challenger — nothing to report yet."
+        )
+        return
+
     if winner_id not in caller_table.players():
         await channel.send(
             f"❌ {winner.mention} isn't playing on your table. "
@@ -348,7 +384,9 @@ async def report_win(ctx, winner: discord.Member = None):
     loser_id = (caller_table.players() - {winner_id}).pop()
     await advance_table(caller_table, winner_id, loser_id, channel, ctx.guild)
 
-    # After resolving, check if second table should open
+    # Open a second table if the queue is large enough. Do NOT run the general
+    # try_seat_players sweep here — it would immediately refill the table we
+    # just paused using the loser who was just appended to the queue.
     await try_start_second_table(channel, ctx.guild)
 
 
