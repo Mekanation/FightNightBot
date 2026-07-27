@@ -13,6 +13,7 @@ Commands:
   !customs       - Ping for a custom game, showing your rough hidden elo
   !fn reset      - (Admin) Fully reset all games and queue
   !fn removetable <1|2> - (Admin) Remove a stalled table
+  !fn resetstats - (Admin) Wipe all win/loss records and elo
 """
 
 import discord
@@ -527,11 +528,16 @@ async def fn_admin(ctx, subcommand: str = None, *args):
         del tables[num]
         await channel.send(f"🗑️ Table {num} has been removed.")
 
+    elif subcommand == "resetstats":
+        save_stats({"players": {}, "matches": []})
+        await channel.send("🔄 Win/loss records and elo have been reset for all players.")
+
     else:
         await channel.send(
             "**Admin commands:**\n"
             "`!fn reset` — clear all tables and queue\n"
-            "`!fn removetable <1|2>` — remove a stalled table"
+            "`!fn removetable <1|2>` — remove a stalled table\n"
+            "`!fn resetstats` — wipe all win/loss records and elo"
         )
 
 
@@ -554,6 +560,7 @@ async def help_cmd(ctx):
     embed.add_field(name="`!customs`", value="Ping for a custom game, showing your rough elo", inline=False)
     embed.add_field(name="`!fn reset` *(admin)*", value="Reset all tables and queue", inline=False)
     embed.add_field(name="`!fn removetable <1|2>` *(admin)*", value="Remove a stalled table", inline=False)
+    embed.add_field(name="`!fn resetstats` *(admin)*", value="Wipe all win/loss records and elo", inline=False)
     await ctx.send(embed=embed)
 
 @bot.command(name="reportwin")
