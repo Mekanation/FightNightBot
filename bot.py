@@ -7,7 +7,7 @@ Commands:
   !win @player   - Report the winner of the current game
   !queue         - Show the current queue and active tables
   !hof           - Show the all-time Hall of Fame
-  !reportwin @winner @loser winnerCiv loserCiv - Report a custom game result (needs confirmation)
+  !reportwin @winner @loser - Report a custom game result (civ picked via dropdown, needs confirmation)
   !leaderboard   - Show all-time win/loss rankings
   !customs       - Ping for a custom game, showing your rough hidden elo
   !fn reset      - (Admin) Fully reset all games and queue
@@ -47,6 +47,17 @@ ELO_K_FACTOR = 32
 
 # How long a !reportwin confirmation request waits for the other player to react
 REPORT_CONFIRM_TIMEOUT = 300  # seconds
+
+# All currently released AOE4 civs (base game + free updates + expansions), used to
+# populate the !reportwin civ dropdowns. Update this list when new civs release —
+# Vikings and Scots (Raiders of the North) are not yet out and are intentionally omitted.
+CIV_LIST = [
+    "Abbasid Dynasty", "Ayyubids", "Byzantines", "Chinese", "Delhi Sultanate",
+    "English", "French", "Golden Horde", "Holy Roman Empire", "House of Lancaster",
+    "Japanese", "Jeanne d'Arc", "Jin Dynasty", "Knights Templar", "Macedonian Dynasty",
+    "Malians", "Mongols", "Order of the Dragon", "Ottomans", "Rus",
+    "Sengoku Daimyo", "Tughlaq Dynasty", "Zhu Xi's Legacy",
+]
 
 # ──────────────────────────────────────────────
 # Persistence
@@ -125,6 +136,34 @@ intents.message_content = True
 intents.members = True
 
 bot = commands.Bot(command_prefix=BOT_PREFIX, intents=intents, help_command=None)
+
+class CivSelectView(discord.ui.View):
+    """A single-use dropdown for picking one civ from CIV_LIST. Only `author_id` may use it."""
+    def __init__(self, author_id: int, placeholder: str):
+        super().__init__(timeout=REPORT_CONFIRM_TIMEOUT)
+        self.author_id = author_id
+        self.chosen_civ: str | None = None
+
+        select = discord.ui.Select(
+            placeholder=placeholder,
+            options=[discord.SelectOption(label=civ) for civ in CIV_LIST]
+        )
+        select.callback = self._on_select
+        self.add_item(select)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "Only the person who ran `!reportwin` can make this selection.", ephemeral=True
+            )
+            return False
+        return True
+
+    async def _on_select(self, interaction: discord.Interaction):
+        self.chosen_civ = interaction.data["values"][0]
+        await interaction.response.defer()
+        self.stop()
+
 
 # ──────────────────────────────────────────────
 # Helpers
@@ -505,8 +544,8 @@ async def help_cmd(ctx):
     embed.add_field(name="`!queue`", value="Show active tables and the queue", inline=False)
     embed.add_field(name="`!hof`", value="Show the all-time Hall of Fame", inline=False)
     embed.add_field(
-        name="`!reportwin @winner @loser winnerCiv loserCiv`",
-        value="Report a custom game result — the other player must confirm with ✅",
+        name="`!reportwin @winner @loser`",
+        value="Report a custom game result — pick each player's civ from a dropdown, then the other player confirms with ✅",
         inline=False
     )
     embed.add_field(name="`!leaderboard`", value="Show all-time custom game win/loss rankings", inline=False)
@@ -516,20 +555,16 @@ async def help_cmd(ctx):
     await ctx.send(embed=embed)
 
 @bot.command(name="reportwin")
-async def report_win_custom(ctx, winner: discord.Member = None, loser: discord.Member = None,
-                             winner_civ: str = None, loser_civ: str = None):
+async def report_win_custom(ctx, winner: discord.Member = None, loser: discord.Member = None):
     """
-    Report a custom game result: !reportwin @winner @loser winnerCiv loserCiv
-    Either player can report, but the OTHER player must confirm with a ✅ reaction
-    before it's recorded. Wrap multi-word civ names in quotes, e.g. "Holy Roman Empire".
+    Report a custom game result: !reportwin @winner @loser
+    You'll be prompted to pick each player's civ from a dropdown. Either player can
+    report, but the OTHER player must confirm with a ✅ reaction before it's recorded.
     """
     channel = await get_fn_channel(ctx)
 
-    if winner is None or loser is None or winner_civ is None or loser_civ is None:
-        await channel.send(
-            '❓ Usage: `!reportwin @winner @loser winnerCiv loserCiv` '
-            '(quote multi-word civs, e.g. "Holy Roman Empire")'
-        )
+    if winner is None or loser is None:
+        await channel.send('❓ Usage: `!reportwin @winner @loser`')
         return
 
     if winner.id == loser.id:
@@ -544,6 +579,26 @@ async def report_win_custom(ctx, winner: discord.Member = None, loser: discord.M
     else:
         await channel.send("❌ Only one of the two players in the match can report the result.")
         return
+
+    winner_view = CivSelectView(reporter_id, f"Select {winner.display_name}'s civ")
+    winner_prompt = await channel.send(
+        f"🎮 {ctx.author.mention}, select **{winner.display_name}**'s civ:", view=winner_view
+    )
+    if await winner_view.wait() or winner_view.chosen_civ is None:
+        await winner_prompt.edit(content="⌛ Civ selection timed out — run `!reportwin` again.", view=None)
+        return
+    winner_civ = winner_view.chosen_civ
+    await winner_prompt.edit(content=f"✅ **{winner.display_name}**'s civ: **{winner_civ}**", view=None)
+
+    loser_view = CivSelectView(reporter_id, f"Select {loser.display_name}'s civ")
+    loser_prompt = await channel.send(
+        f"🎮 {ctx.author.mention}, select **{loser.display_name}**'s civ:", view=loser_view
+    )
+    if await loser_view.wait() or loser_view.chosen_civ is None:
+        await loser_prompt.edit(content="⌛ Civ selection timed out — run `!reportwin` again.", view=None)
+        return
+    loser_civ = loser_view.chosen_civ
+    await loser_prompt.edit(content=f"✅ **{loser.display_name}**'s civ: **{loser_civ}**", view=None)
 
     confirm_msg = await channel.send(
         f"📋 **Match report:** {winner.mention} defeated {loser.mention} "

@@ -61,7 +61,7 @@ Open `bot.py` and edit the config section at the top:
 | `!win @player` | Active players | Report who won the game |
 | `!queue` | Anyone | Show tables and queue |
 | `!hof` | Anyone | Show all-time Hall of Fame |
-| `!reportwin @winner @loser winnerCiv loserCiv` | Either player | Report a custom game result (needs the other player's ✅ confirmation) |
+| `!reportwin @winner @loser` | Either player | Report a custom game result — pick each player's civ from a dropdown, then the other player confirms with ✅ |
 | `!leaderboard` | Anyone | Show all-time custom game win/loss rankings |
 | `!customs` | Anyone | Ping for a custom game, showing your rough hidden elo |
 | `!fn reset` | Admin | Clear everything and start over |
