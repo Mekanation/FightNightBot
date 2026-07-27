@@ -7,6 +7,9 @@ Commands:
   !win @player   - Report the winner of the current game
   !queue         - Show the current queue and active tables
   !hof           - Show the all-time Hall of Fame
+  !reportwin @winner @loser winnerCiv loserCiv - Report a custom game result (needs confirmation)
+  !leaderboard   - Show all-time win/loss rankings
+  !customs       - Ping for a custom game, showing your rough hidden elo
   !fn reset      - (Admin) Fully reset all games and queue
   !fn removetable <1|2> - (Admin) Remove a stalled table
 """
@@ -14,6 +17,7 @@ Commands:
 import discord
 import json
 import os
+import asyncio
 from discord.ext import commands
 from collections import deque
 
@@ -36,10 +40,19 @@ WIN_STREAK_TARGET = 3
 # Role or user IDs allowed to use admin commands (besides server admins)
 ADMIN_ROLE_NAME = "Lord Mod"  # set to None to disable role check
 
+# Starting elo for players with no recorded games, and the K-factor used
+# when adjusting elo after each confirmed !reportwin result.
+DEFAULT_ELO = 1000
+ELO_K_FACTOR = 32
+
+# How long a !reportwin confirmation request waits for the other player to react
+REPORT_CONFIRM_TIMEOUT = 300  # seconds
+
 # ──────────────────────────────────────────────
 # Persistence
 # ──────────────────────────────────────────────
 HOF_FILE = "hall_of_fame.json"
+STATS_FILE = "player_stats.json"
 
 def load_hof() -> dict:
     if os.path.exists(HOF_FILE):
@@ -50,6 +63,30 @@ def load_hof() -> dict:
 def save_hof(hof: dict):
     with open(HOF_FILE, "w") as f:
         json.dump(hof, f, indent=2)
+
+def load_stats() -> dict:
+    if os.path.exists(STATS_FILE):
+        with open(STATS_FILE, "r") as f:
+            return json.load(f)
+    return {"players": {}, "matches": []}
+
+def save_stats(stats: dict):
+    with open(STATS_FILE, "w") as f:
+        json.dump(stats, f, indent=2)
+
+def get_player_record(stats: dict, user_id: int) -> dict:
+    """Returns the stats entry for a player, creating a default one if needed."""
+    key = str(user_id)
+    if key not in stats["players"]:
+        stats["players"][key] = {"wins": 0, "losses": 0, "elo": DEFAULT_ELO}
+    return stats["players"][key]
+
+def calc_new_elo(winner_elo: float, loser_elo: float) -> tuple[float, float]:
+    """Standard elo update: winner and loser move toward the result they 'should' have had."""
+    expected_winner = 1 / (1 + 10 ** ((loser_elo - winner_elo) / 400))
+    new_winner_elo = winner_elo + ELO_K_FACTOR * (1 - expected_winner)
+    new_loser_elo = loser_elo - ELO_K_FACTOR * (1 - expected_winner)
+    return new_winner_elo, new_loser_elo
 
 # ──────────────────────────────────────────────
 # Game State
@@ -467,15 +504,144 @@ async def help_cmd(ctx):
     embed.add_field(name="`!win @player`", value="Report the winner of your current game", inline=False)
     embed.add_field(name="`!queue`", value="Show active tables and the queue", inline=False)
     embed.add_field(name="`!hof`", value="Show the all-time Hall of Fame", inline=False)
+    embed.add_field(
+        name="`!reportwin @winner @loser winnerCiv loserCiv`",
+        value="Report a custom game result — the other player must confirm with ✅",
+        inline=False
+    )
+    embed.add_field(name="`!leaderboard`", value="Show all-time custom game win/loss rankings", inline=False)
+    embed.add_field(name="`!customs`", value="Ping for a custom game, showing your rough elo", inline=False)
     embed.add_field(name="`!fn reset` *(admin)*", value="Reset all tables and queue", inline=False)
     embed.add_field(name="`!fn removetable <1|2>` *(admin)*", value="Remove a stalled table", inline=False)
     await ctx.send(embed=embed)
 
+@bot.command(name="reportwin")
+async def report_win_custom(ctx, winner: discord.Member = None, loser: discord.Member = None,
+                             winner_civ: str = None, loser_civ: str = None):
+    """
+    Report a custom game result: !reportwin @winner @loser winnerCiv loserCiv
+    Either player can report, but the OTHER player must confirm with a ✅ reaction
+    before it's recorded. Wrap multi-word civ names in quotes, e.g. "Holy Roman Empire".
+    """
+    channel = await get_fn_channel(ctx)
+
+    if winner is None or loser is None or winner_civ is None or loser_civ is None:
+        await channel.send(
+            '❓ Usage: `!reportwin @winner @loser winnerCiv loserCiv` '
+            '(quote multi-word civs, e.g. "Holy Roman Empire")'
+        )
+        return
+
+    if winner.id == loser.id:
+        await channel.send("❌ Winner and loser can't be the same person.")
+        return
+
+    reporter_id = ctx.author.id
+    if reporter_id == winner.id:
+        other_player = loser
+    elif reporter_id == loser.id:
+        other_player = winner
+    else:
+        await channel.send("❌ Only one of the two players in the match can report the result.")
+        return
+
+    confirm_msg = await channel.send(
+        f"📋 **Match report:** {winner.mention} defeated {loser.mention} "
+        f"({winner_civ} vs {loser_civ}).\n"
+        f"{other_player.mention} react ✅ to confirm or ❌ to dispute — expires in "
+        f"{REPORT_CONFIRM_TIMEOUT // 60} minutes."
+    )
+    await confirm_msg.add_reaction("✅")
+    await confirm_msg.add_reaction("❌")
+
+    def check(reaction: discord.Reaction, user: discord.User) -> bool:
+        return (
+            reaction.message.id == confirm_msg.id
+            and user.id == other_player.id
+            and str(reaction.emoji) in ("✅", "❌")
+        )
+
+    try:
+        reaction, _ = await bot.wait_for("reaction_add", timeout=REPORT_CONFIRM_TIMEOUT, check=check)
+    except asyncio.TimeoutError:
+        await channel.send(f"⌛ Match report expired — {other_player.mention} never confirmed.")
+        return
+
+    if str(reaction.emoji) == "❌":
+        await channel.send(f"🚫 {other_player.mention} disputed the report. No changes made.")
+        return
+
+    stats = load_stats()
+    winner_record = get_player_record(stats, winner.id)
+    loser_record = get_player_record(stats, loser.id)
+
+    new_winner_elo, new_loser_elo = calc_new_elo(winner_record["elo"], loser_record["elo"])
+    winner_record["elo"] = new_winner_elo
+    loser_record["elo"] = new_loser_elo
+    winner_record["wins"] += 1
+    loser_record["losses"] += 1
+
+    stats["matches"].append({
+        "winner_id": winner.id,
+        "loser_id": loser.id,
+        "winner_civ": winner_civ,
+        "loser_civ": loser_civ,
+    })
+    save_stats(stats)
+
+    await channel.send(
+        f"✅ **Confirmed!** {winner.mention} defeated {loser.mention} "
+        f"({winner_civ} vs {loser_civ}). Records updated."
+    )
+
+
+@bot.command(name="leaderboard")
+async def leaderboard(ctx):
+    """Show all-time win/loss rankings for custom games."""
+    channel = await get_fn_channel(ctx)
+    stats = load_stats()
+    players = stats.get("players", {})
+
+    ranked = [
+        (uid, record) for uid, record in players.items()
+        if record["wins"] + record["losses"] > 0
+    ]
+    if not ranked:
+        await channel.send("📊 No custom games have been reported yet — use `!reportwin` after your next match!")
+        return
+
+    ranked.sort(key=lambda item: (
+        item[1]["wins"] / (item[1]["wins"] + item[1]["losses"]),
+        item[1]["wins"]
+    ), reverse=True)
+
+    medals = ["🥇", "🥈", "🥉"]
+    lines = []
+    for i, (uid, record) in enumerate(ranked):
+        member = ctx.guild.get_member(int(uid))
+        name = member.display_name if member else uid
+        wins, losses = record["wins"], record["losses"]
+        winrate = wins / (wins + losses) * 100
+        medal = medals[i] if i < 3 else f"`{i + 1}.`"
+        lines.append(f"{medal} **{name}** — {wins}-{losses} ({winrate:.0f}%)")
+
+    embed = discord.Embed(
+        title="📊 Custom Games Leaderboard",
+        description="\n".join(lines),
+        color=0x2ECC71
+    )
+    await channel.send(embed=embed)
+
+
 @bot.command(name="customs")
 async def customs(ctx):
     customGames = discord.utils.get(ctx.guild.roles, id=1478504818027794543)
-    channel = await get_fn_channel(ctx)
-    await ctx.send(f'{customGames.mention} {ctx.author.mention} is looking for a custom game')
+    stats = load_stats()
+    record = stats.get("players", {}).get(str(ctx.author.id), {"elo": DEFAULT_ELO})
+    elo_display = round(record["elo"])
+    await ctx.send(
+        f'{customGames.mention} {ctx.author.mention} (~{elo_display} elo) is looking for a custom game'
+    )
 
 
 

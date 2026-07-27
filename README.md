@@ -61,6 +61,9 @@ Open `bot.py` and edit the config section at the top:
 | `!win @player` | Active players | Report who won the game |
 | `!queue` | Anyone | Show tables and queue |
 | `!hof` | Anyone | Show all-time Hall of Fame |
+| `!reportwin @winner @loser winnerCiv loserCiv` | Either player | Report a custom game result (needs the other player's ✅ confirmation) |
+| `!leaderboard` | Anyone | Show all-time custom game win/loss rankings |
+| `!customs` | Anyone | Ping for a custom game, showing your rough hidden elo |
 | `!fn reset` | Admin | Clear everything and start over |
 | `!fn removetable <1\|2>` | Admin | Remove a stalled table |
 
@@ -73,13 +76,14 @@ Open `bot.py` and edit the config section at the top:
 - If the champion wins **3 in a row**: the bot announces it, logs it to the Hall of Fame, and the next 2 in queue start fresh
 - When the **queue hits 12 players**, **Table 2** opens automatically with the next 2 in line
 - Hall of Fame is saved to `hall_of_fame.json` and persists between bot restarts
+- Custom game results (`!reportwin`) update each player's win/loss record and a hidden elo rating, saved to `player_stats.json`. Elo starts at `1000` and is never shown exactly — only a rounded value in `!customs`
 
 ---
 
 ## Tips
 
 - To get a channel ID: Enable Developer Mode in Discord settings → right-click your channel → Copy ID
-- The `hall_of_fame.json` file is created automatically on first use
+- The `hall_of_fame.json` and `player_stats.json` files are created automatically on first use
 - If a game gets stuck, an admin can use `!fn removetable` to clear it
 
 ---
