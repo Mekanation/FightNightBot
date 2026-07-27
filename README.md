@@ -63,6 +63,7 @@ Open `bot.py` and edit the config section at the top:
 | `!hof` | Anyone | Show all-time Hall of Fame |
 | `!reportwin @winner @loser` | Either player | Report a custom game result — pick each player's civ from a dropdown, then the other player confirms with ✅ |
 | `!leaderboard` | Anyone | Show all-time custom game win/loss rankings |
+| `!elo [@player]` | Anyone | Show a player's rough hidden elo (yourself by default) |
 | `!customs` | Anyone | Ping for a custom game, showing your rough hidden elo |
 | `!fn reset` | Admin | Clear everything and start over |
 | `!fn removetable <1\|2>` | Admin | Remove a stalled table |

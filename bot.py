@@ -9,6 +9,7 @@ Commands:
   !hof           - Show the all-time Hall of Fame
   !reportwin @winner @loser - Report a custom game result (civ picked via dropdown, needs confirmation)
   !leaderboard   - Show all-time win/loss rankings
+  !elo [@player] - Show a player's rough hidden elo (yourself by default)
   !customs       - Ping for a custom game, showing your rough hidden elo
   !fn reset      - (Admin) Fully reset all games and queue
   !fn removetable <1|2> - (Admin) Remove a stalled table
@@ -549,6 +550,7 @@ async def help_cmd(ctx):
         inline=False
     )
     embed.add_field(name="`!leaderboard`", value="Show all-time custom game win/loss rankings", inline=False)
+    embed.add_field(name="`!elo [@player]`", value="Show a player's rough hidden elo (yourself by default)", inline=False)
     embed.add_field(name="`!customs`", value="Ping for a custom game, showing your rough elo", inline=False)
     embed.add_field(name="`!fn reset` *(admin)*", value="Reset all tables and queue", inline=False)
     embed.add_field(name="`!fn removetable <1|2>` *(admin)*", value="Remove a stalled table", inline=False)
@@ -686,6 +688,25 @@ async def leaderboard(ctx):
         color=0x2ECC71
     )
     await channel.send(embed=embed)
+
+
+@bot.command(name="elo")
+async def show_elo(ctx, player: discord.Member = None):
+    """Show a player's rough hidden elo (yourself by default): !elo [@player]"""
+    channel = await get_fn_channel(ctx)
+    target = player or ctx.author
+
+    stats = load_stats()
+    record = stats.get("players", {}).get(str(target.id))
+
+    if record is None or record["wins"] + record["losses"] == 0:
+        await channel.send(f"📈 {target.display_name} hasn't had any `!reportwin` results recorded yet.")
+        return
+
+    elo_display = round(record["elo"])
+    await channel.send(
+        f"📈 **{target.display_name}** — ~{elo_display} elo ({record['wins']}-{record['losses']})"
+    )
 
 
 @bot.command(name="customs")
